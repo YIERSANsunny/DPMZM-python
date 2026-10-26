@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
+
+# Generated runs and local reference data stay on the experiment machine.
+/artifacts/
+/simulation_validation/results/
+/outputs/
+/I路一阶/
+/Q路一阶/
+/P路二阶/
+/I_P交调/

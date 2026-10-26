@@ -1,0 +1,9 @@
+* text=auto
+*.py text eol=lf
+*.md text eol=lf whitespace=-blank-at-eol,-blank-at-eof
+*.json text eol=lf
+*.csv text eol=lf
+*.txt text eol=lf
+*.png binary
+*.npz binary
+*.pptx binary

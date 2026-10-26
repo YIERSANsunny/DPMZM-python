@@ -1,0 +1,6 @@
+enabled,case_id,step,vpi_value,expected_load_ohm,bias,row_index,tia_csv,adc_csv,analyzer_connection,vpi_formula,expected_python_column,note
+0,legacy_step1_i_pre_rms_check,step1_i_bridge,10.36660078773,1,-8.6,,simulation_validation/results/tia_curves_vpi_10kohm/step1_i_bridge_tia_curve.csv,,single-ended TIA output,10log10(x*x)+30,VPI_single_rms_1ohm_dB,Legacy point captured before RMS convention was confirmed; keep for history only and do not use for locking
+0,step1_q_1p2khz_peak,step1_q_bridge,,1,-3.75,,,,single-ended TIA output,10log10(x*x)+30,VPI_single_rms_1ohm_dB,Fill VPI Step1-Q 1.2 kHz cursor at selected Q bridge bias
+0,step2_ip_2p3khz_valley,step2_p_extreme,,1,-0.1,,,,single-ended TIA output,10log10(x*x)+30,VPI_single_rms_1ohm_dB,Fill VPI Step2 I-P beat 2.3 kHz cursor at selected P extreme bias
+0,step3_p2_2p6khz_i_min,step3_i_min,,1,7.5,,,,single-ended TIA output,10log10(x*x)+30,VPI_single_rms_1ohm_dB,Fill VPI Step3 P second harmonic 2.6 kHz cursor at selected I minimum bias
+0,step4_q_1p2khz_final,step4_q_max,,1,0.0,,,,single-ended TIA output,10log10(x*x)+30,VPI_single_rms_1ohm_dB,Fill VPI Step4 Q 1.2 kHz cursor at selected final Q bias
