@@ -11,6 +11,7 @@ import argparse
 import csv
 import json
 import math
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,9 @@ from typing import Iterable
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+from config import ROOT, parse_config_args, save_config_snapshot
+
 DEFAULT_CHAIN_MANIFEST = (
     PROJECT_ROOT
     / "simulation_validation"
@@ -664,8 +668,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Validate DPMZM Step 1-4 bias finding from CSV sweeps.")
     parser.add_argument("--project-root", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--out-dir", type=Path, default=PROJECT_ROOT / "simulation_validation" / "results")
-    parser.add_argument("--edge-points", type=int, default=2)
-    parser.add_argument("--major-window-db", type=float, default=3.0)
+    parser.add_argument("--edge-points", type=int)
+    parser.add_argument("--major-window-db", type=float)
     parser.add_argument("--i-first-csv", type=Path, default=None)
     parser.add_argument("--q-first-csv", type=Path, default=None)
     parser.add_argument("--ip-csv", type=Path, default=None)
@@ -674,8 +678,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_args(argv=None):
+    return parse_config_args(build_parser(), dict(edge_points="findpoint.edge_points",
+        major_window_db="findpoint.major_window_db"), argv,
+        default_config=ROOT / "configs" / "findpoint.json")
+
+
 def main() -> int:
-    args = build_parser().parse_args()
+    args = parse_args()
+    save_config_snapshot(args.project_config, args.out_dir / "findpoint_config", source=args.config)
     overrides = {
         "step1_i_bridge": args.i_first_csv,
         "step1_q_bridge": args.q_first_csv,

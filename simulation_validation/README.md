@@ -7,6 +7,21 @@
 物理模型现已纳入项目根目录的 `dpmzm/`，各仿真入口默认使用仓库内模型。
 安装依赖、测试和固定工作点复现命令见 [根目录说明](../README.md)。
 
+## 统一配置入口
+
+推荐使用根目录 `run.py`；公共参数来自 `config.py`，场景放在 `configs/`：
+
+```powershell
+python run.py config --config configs/vpi_i1p4_q2p1_p37.json
+python run.py spectrum --config configs/vpi_i1p4_q2p1_p37.json
+python run.py findpoint --config configs/findpoint.json
+```
+
+上述仿真及 TIA/ADC 后处理脚本继续可用，并接受 `--config`。显式命令行参数覆盖场景值；每次运行保存
+`resolved_config.json`。具体字段与硬件配置见 [配置说明](../configs/README.md)。
+仿真采样默认统一为 `1 MHz / 0.1 s`；ADC 仍独立使用 `32 kSPS`。
+硬件 TIA 后处理的 PD 响应度默认统一为 `0.8 A/W`，随机种子统一为 `0`。
+
 ## 数据对齐 SOP
 
 VPI 与 Python 离线仿真对齐时，先按 [VPI数据对齐操作规程.md](./VPI数据对齐操作规程.md) 执行。

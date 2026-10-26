@@ -18,12 +18,15 @@ import csv
 import json
 import math
 import random
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from tia_visibility_analyzer import _format_eng, _to_float
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from config import ADCConfig, HARDWARE_CONFIG, parse_config_args, save_config_snapshot
+from simulation_validation.tia_visibility_analyzer import _format_eng, _to_float
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -31,57 +34,7 @@ DEFAULT_SUMMARY = PROJECT_ROOT / "simulation_validation" / "results" / "findpoin
 DEFAULT_TIA_DIR = PROJECT_ROOT / "simulation_validation" / "results" / "tia_curves"
 DEFAULT_OUT_DIR = PROJECT_ROOT / "simulation_validation" / "results" / "adc_curves"
 DEFAULT_REPORT = PROJECT_ROOT / "simulation_validation" / "results" / "adc_chain_report.md"
-REFERENCE_LOAD_OHM = 50.0
-
-
-@dataclass(frozen=True)
-class ADCParams:
-    sample_rate_sps: float = 32_000.0
-    osr: int = 128
-    power_mode: str = "HR"
-    gain: float = 1.0
-    vref_v: float = 1.2
-    bits: int = 24
-    goertzel_points: int = 640
-    goertzel_blocks: int = 10
-    window: str = "none"
-    global_chop_enabled: bool = False
-    dc_block_enabled: bool = False
-    input_bias_mode: str = "not_configured"
-    r_pos_ohm: float = 1_000.0
-    r_neg_ohm: float = 1_000.0
-    c_diff_f: float = 10e-9
-    adc_noise_rms_v: float = 21.31e-6
-    reference_load_ohm: float = REFERENCE_LOAD_OHM
-
-    @property
-    def fmod_hz(self) -> float:
-        return float(self.sample_rate_sps) * float(self.osr)
-
-    @property
-    def fullscale_peak_v(self) -> float:
-        return float(self.vref_v) / float(self.gain)
-
-    @property
-    def lsb_v(self) -> float:
-        # Bipolar two's-complement code span, expressed as input volts per code.
-        return (2.0 * self.fullscale_peak_v) / float(2**self.bits)
-
-    @property
-    def rc_fc_hz(self) -> float:
-        r_total = float(self.r_pos_ohm) + float(self.r_neg_ohm)
-        return 1.0 / (2.0 * math.pi * r_total * float(self.c_diff_f))
-
-    @property
-    def goertzel_bin_width_hz(self) -> float:
-        return float(self.sample_rate_sps) / float(self.goertzel_points)
-
-    @property
-    def measurement_enbw_hz(self) -> float:
-        # Rectangular/no-window Goertzel has ENBW equal to one DFT bin.
-        window = str(self.window).strip().lower()
-        factor = 1.0 if window in {"none", "rect", "rectangular"} else 1.0
-        return self.goertzel_bin_width_hz * factor
+ADCParams = ADCConfig
 
 
 @dataclass
@@ -568,28 +521,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tia-dir", type=Path, default=DEFAULT_TIA_DIR)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
-    parser.add_argument("--rng-seed", type=int, default=20260709)
-    parser.add_argument("--sample-rate", type=float, default=32_000.0)
-    parser.add_argument("--osr", type=int, default=128)
-    parser.add_argument("--power-mode", default="HR")
-    parser.add_argument("--gain", type=float, default=1.0)
-    parser.add_argument("--vref", type=float, default=1.2)
-    parser.add_argument("--bits", type=int, default=24)
-    parser.add_argument("--goertzel-points", type=int, default=640)
-    parser.add_argument("--goertzel-blocks", type=int, default=10)
-    parser.add_argument("--window", default="none")
-    parser.add_argument("--global-chop", action="store_true")
-    parser.add_argument("--dc-block", action="store_true")
-    parser.add_argument("--input-bias-mode", default="not_configured")
-    parser.add_argument("--r-pos", type=float, default=1_000.0)
-    parser.add_argument("--r-neg", type=float, default=1_000.0)
-    parser.add_argument("--c-diff", type=float, default=10e-9)
-    parser.add_argument("--adc-noise-rms", type=float, default=21.31e-6)
+    parser.add_argument("--rng-seed", type=int)
+    parser.add_argument("--sample-rate", type=float)
+    parser.add_argument("--osr", type=int)
+    parser.add_argument("--power-mode")
+    parser.add_argument("--gain", type=float)
+    parser.add_argument("--vref", type=float)
+    parser.add_argument("--bits", type=int)
+    parser.add_argument("--goertzel-points", type=int)
+    parser.add_argument("--goertzel-blocks", type=int)
+    parser.add_argument("--window")
+    parser.add_argument("--global-chop", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--dc-block", action=argparse.BooleanOptionalAction)
+    parser.add_argument("--input-bias-mode")
+    parser.add_argument("--r-pos", type=float)
+    parser.add_argument("--r-neg", type=float)
+    parser.add_argument("--c-diff", type=float)
+    parser.add_argument("--adc-noise-rms", type=float)
     return parser
 
 
+def parse_args(argv=None):
+    return parse_config_args(build_parser(), dict(
+        rng_seed="sampling.rng_seed", sample_rate="adc.sample_rate_sps", osr="adc.osr",
+        power_mode="adc.power_mode", gain="adc.gain", vref="adc.vref_v", bits="adc.bits",
+        goertzel_points="adc.goertzel_points", goertzel_blocks="adc.goertzel_blocks",
+        window="adc.window", global_chop="adc.global_chop_enabled", dc_block="adc.dc_block_enabled",
+        input_bias_mode="adc.input_bias_mode", r_pos="adc.r_pos_ohm", r_neg="adc.r_neg_ohm",
+        c_diff="adc.c_diff_f", adc_noise_rms="adc.adc_noise_rms_v",
+    ), argv, default_config=HARDWARE_CONFIG)
+
+
 def main() -> int:
-    args = build_parser().parse_args()
+    args = parse_args()
+    save_config_snapshot(args.project_config, args.out_dir, source=args.config)
     params = ADCParams(
         sample_rate_sps=args.sample_rate,
         osr=args.osr,
@@ -607,6 +572,7 @@ def main() -> int:
         r_neg_ohm=args.r_neg,
         c_diff_f=args.c_diff,
         adc_noise_rms_v=args.adc_noise_rms,
+        reference_load_ohm=args.project_config.adc.reference_load_ohm,
     )
     products = run(
         summary_path=args.summary.resolve(),

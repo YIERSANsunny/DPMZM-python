@@ -29,6 +29,10 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from config import PHYSICAL_ARGS, PILOT_ARGS, SAMPLING_ARGS, parse_config_args, save_config_snapshot
+
 DEFAULT_DPMZM_ROOT = PROJECT_ROOT
 DEFAULT_OUT_DIR = PROJECT_ROOT / "simulation_validation" / "results" / "tia_full_spectrum"
 
@@ -400,53 +404,66 @@ def _render_markdown(summary: dict[str, Any]) -> str:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate a VPI-style TIA full electrical spectrum.")
     parser.add_argument("--dpmzm-root", type=Path, default=DEFAULT_DPMZM_ROOT)
-    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-    parser.add_argument("--case-name", default="tia_full_spectrum")
-    parser.add_argument("--i-source-bias", type=float, default=-7.5)
-    parser.add_argument("--q-source-bias", type=float, default=-1.55)
-    parser.add_argument("--p-source-bias", type=float, default=0.1)
-    parser.add_argument("--child-source-gain", type=float, default=2.0)
-    parser.add_argument("--parent-source-gain", type=float, default=1.0)
-    parser.add_argument("--i-dither-source-amp", type=float, default=0.025)
-    parser.add_argument("--q-dither-source-amp", type=float, default=0.0)
-    parser.add_argument("--p-dither-source-amp", type=float, default=0.025)
-    parser.add_argument("--f-i", type=float, default=1000.0)
-    parser.add_argument("--f-q", type=float, default=1200.0)
-    parser.add_argument("--f-p", type=float, default=1300.0)
-    parser.add_argument("--fs", type=float, default=1_000_000.0)
-    parser.add_argument("--t-total", type=float, default=0.1)
-    parser.add_argument("--vpi", type=float, default=5.0)
-    parser.add_argument("--er-db", type=float, default=30.0)
-    parser.add_argument("--il-db", type=float, default=0.0)
-    parser.add_argument("--il-i-db", type=float, default=6.0)
-    parser.add_argument("--il-q-db", type=float, default=6.0)
-    parser.add_argument("--il-p-db", type=float, default=0.0)
-    parser.add_argument("--pin-dbm", type=float, default=10.0)
-    parser.add_argument("--responsivity", type=float, default=0.8)
-    parser.add_argument("--pd-tap", type=float, default=1.0)
-    parser.add_argument("--tia-ohm", type=float, default=10_000.0)
+    parser.add_argument("--out-dir", type=Path)
+    parser.add_argument("--case-name")
+    parser.add_argument("--i-source-bias", type=float)
+    parser.add_argument("--q-source-bias", type=float)
+    phase = parser.add_mutually_exclusive_group()
+    phase.add_argument("--p-source-bias", type=float, help="Legacy source voltage; converted to total P phase")
+    phase.add_argument("--p-phase-deg", type=float, help="Total Q-relative-to-I static phase in degrees")
+    parser.add_argument("--child-source-gain", type=float)
+    parser.add_argument("--parent-source-gain", type=float)
+    parser.add_argument("--i-dither-source-amp", type=float)
+    parser.add_argument("--q-dither-source-amp", type=float)
+    parser.add_argument("--p-dither-source-amp", type=float)
+    parser.add_argument("--f-i", type=float)
+    parser.add_argument("--f-q", type=float)
+    parser.add_argument("--f-p", type=float)
+    parser.add_argument("--fs", type=float)
+    parser.add_argument("--t-total", type=float)
+    parser.add_argument("--vpi", type=float)
+    parser.add_argument("--er-db", type=float)
+    parser.add_argument("--il-db", type=float)
+    parser.add_argument("--il-i-db", type=float)
+    parser.add_argument("--il-q-db", type=float)
+    parser.add_argument("--il-p-db", type=float)
+    parser.add_argument("--pin-dbm", type=float)
+    parser.add_argument("--responsivity", type=float)
+    parser.add_argument("--pd-tap", type=float)
+    parser.add_argument("--tia-ohm", type=float)
     parser.add_argument(
         "--tia-input-equivalent-noise-rms",
         type=float,
-        default=0.0,
         help="VPI TIA InputEquivalentNoise in A rms over --tia-noise-bandwidth.",
     )
     parser.add_argument(
         "--tia-noise-bandwidth",
         type=float,
-        default=1.0,
         help="NoiseBandwidth used to interpret --tia-input-equivalent-noise-rms.",
     )
-    parser.add_argument("--er-model", choices=("vpi", "thesis"), default="vpi")
-    parser.add_argument("--rin-db-hz", type=float, default=-145.0)
-    parser.add_argument("--temp-k", type=float, default=290.0)
-    parser.add_argument("--rng-seed", type=int, default=0)
-    parser.add_argument("--add-model-noise", action="store_true")
+    parser.add_argument("--er-model", choices=("vpi", "thesis"))
+    parser.add_argument("--rin-db-hz", type=float)
+    parser.add_argument("--temp-k", type=float)
+    parser.add_argument("--rng-seed", type=int)
+    parser.add_argument("--add-model-noise", action=argparse.BooleanOptionalAction)
     return parser
 
 
+def parse_args(argv=None):
+    return parse_config_args(_build_parser(), {
+        **PHYSICAL_ARGS, **PILOT_ARGS, **SAMPLING_ARGS,
+        "case_name": "case_name", "i_source_bias": "drive.i_source_bias_v",
+        "q_source_bias": "drive.q_source_bias_v", "tia_ohm": "tia.rf_ohm",
+        "tia_input_equivalent_noise_rms": "tia.input_equivalent_noise_rms_a",
+        "tia_noise_bandwidth": "tia.noise_bandwidth_hz",
+        "add_model_noise": "sampling.add_model_noise",
+    }, argv, spectrum=True)
+
+
 def main() -> int:
-    args = _build_parser().parse_args()
+    args = parse_args()
+    args.out_dir = args.out_dir or DEFAULT_OUT_DIR / args.case_name
+    save_config_snapshot(args.project_config, args.out_dir, source=args.config)
     params = SpectrumParams(
         case_name=args.case_name,
         i_source_bias_v=args.i_source_bias,

@@ -1,0 +1,8 @@
+{
+  "case_name": "iq_i1p4_q2p1_p37deg",
+  "drive": {
+    "i_source_bias_v": 1.4,
+    "q_source_bias_v": 2.1,
+    "p_phase_deg": 37.0
+  }
+}

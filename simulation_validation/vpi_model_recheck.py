@@ -18,15 +18,10 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from config import DEFAULT_CONFIG, parse_config_args, save_config_snapshot
+
 DEFAULT_SIM_ROOT = ROOT
-COMMON = dict(
-    child_source_gain=2.0, parent_source_gain=1.0, Vpi=5.0,
-    ER_dB=30.0, IL_dB=0.0, IL_I_dB=6.0, IL_Q_dB=6.0,
-    IL_P_dB=0.0, Pin_dBm=10.0, Responsivity=0.8, pd_tap=1.0,
-    R_load=1.0, Fs=1e6, T_total=0.1, er_model="vpi",
-    vpi_compatible_dbm=True, Temp_K=290.0, RIN_dB_Hz=-145.0,
-)
-TIA_OHM = 10000.0
 
 
 def write_csv(path, rows):
@@ -44,7 +39,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dpmzm-root", type=Path, default=DEFAULT_SIM_ROOT)
     parser.add_argument("--out-dir", type=Path, default=ROOT / "simulation_validation/results/vpi_model_recheck")
-    args = parser.parse_args()
+    args = parse_config_args(parser, {})
+    cfg = args.project_config
+    if cfg.tia.profile != "vpi":
+        parser.error("VPI recheck requires tia.profile = vpi")
+    p, d, s = cfg.physical, cfg.drive, cfg.sampling
+    common = dict(
+        child_source_gain=p.child_source_gain, parent_source_gain=p.parent_source_gain, Vpi=p.vpi_v,
+        ER_dB=p.er_db, IL_dB=p.il_db, IL_I_dB=p.il_i_db, IL_Q_dB=p.il_q_db,
+        IL_P_dB=p.il_p_db, Pin_dBm=p.pin_dbm, Responsivity=p.responsivity_a_per_w, pd_tap=p.pd_tap,
+        R_load=1.0, Fs=s.fs_hz, T_total=s.t_total_s, er_model=p.er_model,
+        vpi_compatible_dbm=True, Temp_K=p.temp_k, RIN_dB_Hz=p.rin_db_hz,
+    )
+    tia_ohm = cfg.tia.rf_ohm
+    i_amp, q_amp, p_amp = d.i_dither_source_amp_vpeak, d.q_dither_source_amp_vpeak, cfg.findpoint.p_dither_source_amp_vpeak
+    historical_reference = (p == DEFAULT_CONFIG.physical and tia_ohm == DEFAULT_CONFIG.tia.rf_ohm
+                            and i_amp == q_amp == 0.025)
     sys.path.insert(0, str(args.dpmzm_root))
     from dpmzm.core import model
     from dpmzm.experiments.i_pilot_first_sweep import run_i_pilot_first_sweep
@@ -56,27 +66,28 @@ def main():
 
     out_dir = args.out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    save_config_snapshot(cfg, out_dir, source=args.config)
     cases = [
-        dict(name="i_first", function=run_i_pilot_first_sweep, axis="I", target=1000.0,
-             biases=[0.0, 1.367, 0.0], amps=[0.025, 0.0, 0.0],
+        dict(name="i_first", function=run_i_pilot_first_sweep, axis="I", target=d.f_i_hz,
+             biases=[0.0, 1.367, 0.0], amps=[i_amp, 0.0, 0.0],
              sweep=dict(V_DCI_source_start=-10.0, V_DCI_source_stop=10.0,
                         V_DCI_source_step=0.05, V_DCQ_source=1.367, V_DCP_source=0.0,
-                        V_dither_I_source_amp=0.025, f_dither_I=1000.0)),
-        dict(name="q_first", function=run_q_pilot_first_sweep, axis="Q", target=1200.0,
-             biases=[1.367, 0.0, 0.0], amps=[0.0, 0.025, 0.0],
+                        V_dither_I_source_amp=i_amp, f_dither_I=d.f_i_hz)),
+        dict(name="q_first", function=run_q_pilot_first_sweep, axis="Q", target=d.f_q_hz,
+             biases=[1.367, 0.0, 0.0], amps=[0.0, q_amp, 0.0],
              sweep=dict(V_DCQ_source_start=-10.0, V_DCQ_source_stop=10.0,
                         V_DCQ_source_step=0.05, V_DCI_source=1.367, V_DCP_source=0.0,
-                        V_dither_Q_source_amp=0.025, f_dither_Q=1200.0)),
-        dict(name="p_second", function=run_p_pilot_second_sweep, axis="I", target=2600.0,
-             biases=[0.0, -1.55, 0.1], amps=[0.0, 0.0, 0.025],
+                        V_dither_Q_source_amp=q_amp, f_dither_Q=d.f_q_hz)),
+        dict(name="p_second", function=run_p_pilot_second_sweep, axis="I", target=2 * d.f_p_hz,
+             biases=[0.0, -1.55, 0.1], amps=[0.0, 0.0, p_amp],
              sweep=dict(V_DCI_source_start=-10.0, V_DCI_source_stop=10.0,
                         V_DCI_source_step=0.05, V_DCQ_source=-1.55, V_DCP_source=0.1,
-                        V_dither_P_source_amp=0.025, f_dither_P=1300.0)),
+                        V_dither_P_source_amp=p_amp, f_dither_P=d.f_p_hz)),
     ]
     manifest = dict(
-        common=COMMON, tia_ohm=TIA_OHM, readout="single-ended RMS, 1 ohm equivalent",
+        common=common, tia_ohm=tia_ohm, readout="single-ended RMS, 1 ohm equivalent",
         noise_scope="Deterministic signals; noise estimates are not used as measured curves.",
-        sampling="1 MSa/s, 0.1 s, rectangular window; 10 Hz coherent bins",
+        sampling=f"{s.fs_hz:g} Sa/s, {s.t_total_s:g} s, rectangular window; coherent bins",
         scan="source -10..10 V, step 0.05 V; child effective step 0.1 V",
         model_path=str(Path(model.__file__).resolve()),
         model_sha256=hashlib.sha256(Path(model.__file__).read_bytes()).hexdigest(),
@@ -89,12 +100,12 @@ def main():
     curves = []
     for case, ax in zip(cases, axes):
         folder = out_dir / case["name"]
-        result = case["function"](out_dir=folder, **COMMON, **case["sweep"])
+        result = case["function"](out_dir=folder, **common, **case["sweep"])
         with Path(result["csv_path"]).open(encoding="utf-8", newline="") as stream:
             raw = list(csv.DictReader(stream))
         bias = np.array([float(row[f"V_DC{case['axis']}_source_V"]) for row in raw])
         peak = np.array([float(row["I_tone_peak_A"]) for row in raw])
-        v_rms = peak / math.sqrt(2.0) * TIA_OHM / 2.0
+        v_rms = peak / math.sqrt(2.0) * tia_ohm / 2.0
         reading = db_readout(v_rms)
         curves.append(peak)
         rows = []
@@ -115,7 +126,7 @@ def main():
         peak_index = int(np.argmax(reading))
         peak_rows.append(dict(case_id=case["name"], python_peak_dB=float(reading[peak_index]),
                               source_V=float(bias[peak_index]),
-                              historical_vpi_approx_dB=5.0 if case["name"] != "p_second" else None))
+                              historical_vpi_approx_dB=5.0 if historical_reference and case["name"] != "p_second" else None))
         # Compare the optimized sweeps with direct time-domain simulation at weak and strong points.
         indices = sorted({0, len(raw) // 2, peak_index, int(np.argmin(peak)),
                           int(np.argmin(abs(bias + 7.5)))})
@@ -123,17 +134,19 @@ def main():
         for index in indices:
             volts = [float(raw[index][f"V_DC{axis}_source_V"]) for axis in "IQP"]
             sim = model.simulate_dpmzm(
-                Fs=COMMON["Fs"], T_total=COMMON["T_total"], Vpi=5.0,
-                ER_dB=30.0, ER_I_dB=30.0, ER_Q_dB=30.0, ER_P_dB=30.0,
-                IL_dB=0.0, IL_I_dB=6.0, IL_Q_dB=6.0, IL_P_dB=0.0,
-                Pin_dBm=10.0, Responsivity=0.8, R_load=1.0, pd_tap=1.0,
-                V_DCI=2 * volts[0], V_DCQ=2 * volts[1], V_DCP=volts[2],
-                V_dither_I_amp=2 * case["amps"][0], V_dither_Q_amp=2 * case["amps"][1],
-                V_dither_P_amp=case["amps"][2],
-                f_dither_I=1000.0, f_dither_Q=1200.0, f_dither_P=1300.0,
-                V_RFI_amp=0.0, V_RFQ_amp=0.0, er_model="vpi", rng_seed=0,
+                Fs=s.fs_hz, T_total=s.t_total_s, Vpi=p.vpi_v,
+                ER_dB=p.er_db, IL_dB=p.il_db, IL_I_dB=p.il_i_db, IL_Q_dB=p.il_q_db, IL_P_dB=p.il_p_db,
+                Pin_dBm=p.pin_dbm, Responsivity=p.responsivity_a_per_w, R_load=1.0, pd_tap=p.pd_tap,
+                V_DCI=p.child_source_gain * volts[0], V_DCQ=p.child_source_gain * volts[1],
+                V_DCP=p.parent_source_gain * volts[2],
+                V_dither_I_amp=p.child_source_gain * case["amps"][0],
+                V_dither_Q_amp=p.child_source_gain * case["amps"][1],
+                V_dither_P_amp=p.parent_source_gain * case["amps"][2],
+                f_dither_I=d.f_i_hz, f_dither_Q=d.f_q_hz, f_dither_P=d.f_p_hz,
+                V_RFI_amp=0.0, V_RFQ_amp=0.0, er_model=p.er_model, rng_seed=s.rng_seed,
+                Temp_K=p.temp_k, RIN_dB_Hz=p.rin_db_hz,
             )
-            time = np.arange(sim.I_pd.size) / COMMON["Fs"]
+            time = np.arange(sim.I_pd.size) / s.fs_hz
             direct_peak = 2 * abs(np.mean(sim.I_pd * np.exp(-2j * np.pi * case["target"] * time)))
             errors.append(abs(float(direct_peak) - peak[index]))
         check = dict(name=case["name"] + "_sweep_vs_time_domain",
@@ -148,7 +161,7 @@ def main():
                 python_single_rms_1ohm_dB=reading[index], vpi_single_rms_1ohm_dB="",
             ))
         ax.plot(bias, reading, color="#177d91", linewidth=1.4)
-        if case["name"] != "p_second":
+        if case["name"] != "p_second" and historical_reference:
             ax.axhline(5.0, color="#a33d36", linestyle="--", linewidth=1,
                        label="Historical VPI peak about 5 dB (not a VPI trace)")
             ax.legend(fontsize=8)
@@ -169,8 +182,11 @@ def main():
         print(json.dumps(peak_rows[-1]), flush=True)
 
     symmetry_error = float(np.max(abs(curves[0] - curves[1])))
+    symmetric_fixture = (i_amp == q_amp and p.il_i_db == p.il_q_db
+                         and p.il_p_db == 0 and p.er_model == "vpi")
     manifest["checks"].append(dict(name="I_Q_swapped_source_symmetry_at_P0",
-        max_abs_error_A=symmetry_error, status="PASS" if symmetry_error < 1e-15 else "FAIL"))
+        max_abs_error_A=symmetry_error,
+        status=("PASS" if symmetry_error < 1e-15 else "FAIL") if symmetric_fixture else "NOT_APPLICABLE"))
     if not (out_dir / "vpi_cursor_points.csv").exists():
         write_csv(out_dir / "vpi_cursor_points.csv", marker_rows)
     manifest["peaks"] = peak_rows
@@ -181,20 +197,21 @@ def main():
         "# VPI / Python 模型复核", "",
         "当前结论：I/Q 一阶的历史峰值量级可复核；尚无逐点 VPI 导出数据，不能认定两个模型全面一致。", "",
         "## 固定参数", "",
-        "- Pin=10 dBm；Vpi=5 V；I/Q ER=30 dB；I/Q IL=6 dB；P IL=0 dB；PD=0.8 A/W。",
-        "- I/Q 源端 NEGATIVE 映射为两倍有效电压；P 源端按 1:1 映射。",
+        f"- Pin={p.pin_dbm:g} dBm；Vpi={p.vpi_v:g} V；I/Q ER={p.er_db:g} dB；I/Q IL={p.il_i_db:g}/{p.il_q_db:g} dB；P IL={p.il_p_db:g} dB；PD={p.responsivity_a_per_w:g} A/W。",
+        f"- I/Q 源端映射系数={p.child_source_gain:g}；P 源端映射系数={p.parent_source_gain:g}。",
         "- 扫描源端 -10..10 V、步进 0.05 V，即 I/Q 有效步进 0.1 V。",
-        "- Fs=1 MHz；TimeWindow=0.1 s；矩形窗；RBW=10 Hz。",
-        "- TIA=10 kOhm，单端 RMS，10log10(Vrms^2)+30；50 ohm 列在此基础上减 16.9897 dB。",
-        "- 本轮曲线为确定性信号；模型噪声预算仍为 RIN=-145 dB/Hz、290 K，未叠加成观测曲线。", "",
+        f"- Fs={s.fs_hz:g} Hz；TimeWindow={s.t_total_s:g} s；矩形窗；RBW={cfg.derived()['fft_bin_width_hz']:g} Hz。",
+        f"- TIA={tia_ohm:g} Ohm，单端 RMS，10log10(Vrms^2)+30；50 ohm 列在此基础上减 16.9897 dB。",
+        f"- 本轮曲线为确定性信号；模型噪声预算为 RIN={p.rin_db_hz:g} dB/Hz、{p.temp_k:g} K，未叠加成观测曲线。",
+        "- 完整配置见 resolved_config.json。复核电压夹具固定，不使用固定工作点 drive 偏置。", "",
         "## 对照结果", "",
         "| 案例 | 固定源端偏置 | 开启的源端导频 | Python 峰值 | 历史 VPI 参考 |",
         "|---|---|---|---:|---|",
     ]
     descriptions = [
-        ("Q=1.367 V, P=0 V", "I=0.025 Vp @ 1 kHz"),
-        ("I=1.367 V, P=0 V", "Q=0.025 Vp @ 1.2 kHz"),
-        ("Q=-1.55 V, P=0.1 V", "P=0.025 Vp @ 1.3 kHz; 读 2.6 kHz"),
+        ("Q=1.367 V, P=0 V", f"I={i_amp:g} Vp @ {d.f_i_hz:g} Hz"),
+        ("I=1.367 V, P=0 V", f"Q={q_amp:g} Vp @ {d.f_q_hz:g} Hz"),
+        ("Q=-1.55 V, P=0.1 V", f"P={p_amp:g} Vp @ {d.f_p_hz:g} Hz; 读 {2*d.f_p_hz:g} Hz"),
     ]
     for peak, (biases, pilots) in zip(peak_rows, descriptions):
         reference = "约 5 dB，仅截图量级" if peak["historical_vpi_approx_dB"] is not None else "缺同参数逐点数据"
@@ -207,7 +224,7 @@ def main():
         "- vpi 模式下 ER_P 虽被读取，delta_P 未进入场传输；P 块为 Q 光路相位调节，主合束默认等权。",
         "- I/Q 一阶的约 5 dB 截图只证明峰值量级接近，不能替代全曲线、谷值位置及 DC 功率的对照。",
         "- 历史 Q 路峰值为 4.823321 dB；统一响应度到 0.8 A/W 后，应与 I 路重算结果一起比较。",
-        "- 历史 VPI RIN=-175 dB/Hz，与当前 Python -145 dB/Hz 不同；噪底暂不判定一致。",
+        "- 本入口只对确定性信号做比较；噪底需要按实际 RIN、TIA 和采集带宽单独对照。",
         "- TIA 截止频率和 Bessel 阶数未接入当前电压换算；当前频谱脚本按功率叠加噪声，没有相干交叉项。",
         "- 历史部分频谱将三路导频均设为 0.05 Vp，不能与本轮单路 0.025 Vp 直接作峰值对照。", "",
         "## 下一次 VPI 采集", "",
@@ -219,7 +236,7 @@ def main():
     ])
     (out_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
     print(f"Report: {out_dir / 'report.md'}", flush=True)
-    return 1 if any(check["status"] != "PASS" for check in manifest["checks"]) else 0
+    return 1 if any(check["status"] == "FAIL" for check in manifest["checks"]) else 0
 
 
 if __name__ == "__main__":

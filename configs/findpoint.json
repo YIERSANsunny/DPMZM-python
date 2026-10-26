@@ -1,0 +1,8 @@
+{
+  "case_name": "chained_findpoint",
+  "findpoint": {
+    "scan_start_source_v": -10.0,
+    "scan_stop_source_v": 10.0,
+    "scan_step_source_v": 0.05
+  }
+}

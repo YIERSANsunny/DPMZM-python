@@ -15,7 +15,10 @@ dpmzm/
 mzm/plot.py              DPMZM 复用的绘图函数
 simulation_validation/  电谱、链式找点、TIA/ADC 后处理和 VPI 对照
 theoretical_knowledge/  公式依据与 Step 工作流
-tests/                  已确认工作点的电谱回归检查
+tests/                  统一配置与已确认工作点的回归检查
+config.py               统一参数定义、校验、派生与配置加载
+configs/                工作点、找点和硬件前端场景
+run.py                  统一命令入口
 项目流程与进展.md        项目入口与阶段计划
 ```
 
@@ -30,16 +33,38 @@ python -m unittest discover -s tests -v
 
 依赖为 NumPy 和 Matplotlib；当前 DPMZM 路径不需要 PyTorch。
 
+## 统一入口与配置
+
+公共默认参数统一在 `config.py` 中维护，场景文件只写需要覆盖的字段。
+优先级为：默认参数 < JSON 场景 < 显式命令行参数。
+
+先检查生效参数，再运行电谱：
+
+```powershell
+python run.py config --config configs/vpi_i1p4_q2p1_p37.json
+python run.py spectrum --config configs/vpi_i1p4_q2p1_p37.json
+python run.py spectrum --config configs/vpi_i0p5_q0p7_p140.json
+```
+
+需要临时改工作点时：
+
+```powershell
+python run.py spectrum --config configs/vpi_i1p4_q2p1_p37.json --i-source-bias 1.5 --p-phase-deg 45
+```
+
+参数含义、硬件配置与完整命令表见 [配置说明](configs/README.md)。
+
 ## 固定工作点电谱
 
 下面复现源端 I=1.4 V、Q=2.1 V、主调总静态相位 37 度的工作点：
 
 ```powershell
-python simulation_validation/tia_full_spectrum.py --case-name iq_i1p4_q2p1_p37deg --i-source-bias 1.4 --q-source-bias 2.1 --p-source-bias 1.0277777777777777 --i-dither-source-amp 0.025 --q-dither-source-amp 0.025 --p-dither-source-amp 0 --tia-input-equivalent-noise-rms 1.1e-6 --tia-noise-bandwidth 8e9 --rin-db-hz -145 --add-model-noise
+python run.py spectrum --config configs/vpi_i1p4_q2p1_p37.json
 ```
 
-输出默认写入 `simulation_validation/results/tia_full_spectrum/`，包含完整频谱 CSV、
-单端/差分 PNG、参数 JSON 和 Markdown 摘要。
+输出默认写入 `simulation_validation/results/tia_full_spectrum/<case_name>/`，包含完整频谱 CSV、
+单端/差分 PNG、参数 JSON、Markdown 摘要以及 `resolved_config.json`。
+后者保存完整生效配置与派生量，也可以作为 `--config` 的输入复现运行。
 
 本例固定口径：
 
@@ -61,13 +86,14 @@ python simulation_validation/tia_full_spectrum.py --case-name iq_i1p4_q2p1_p37de
 ## 扫描与找点
 
 ```powershell
-python simulation_validation/vpi_model_recheck.py
-python simulation_validation/run_chained_findpoint.py
+python run.py recheck
+python run.py findpoint --config configs/findpoint.json
 ```
 
 第二条命令依次执行 I/Q 高响应平台、P 极值点、I 最小点候选、Q 最大点候选，
 并把每一步偏置传入下一步。具体入口和后处理见
 [验证目录说明](simulation_validation/README.md)。
+电谱与找点的仿真采样默认统一为 1 MHz / 0.1 s；ADC 采样仍独立为 32 kSPS。
 
 ## 文档与结果管理
 

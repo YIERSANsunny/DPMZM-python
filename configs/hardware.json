@@ -1,0 +1,8 @@
+{
+  "case_name": "hardware_frontend",
+  "tia": {
+    "profile": "hardware",
+    "rf_ohm": 100000.0,
+    "input_equivalent_noise_rms_a": 0.0
+  }
+}

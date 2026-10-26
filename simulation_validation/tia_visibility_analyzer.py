@@ -11,6 +11,7 @@ import argparse
 import csv
 import json
 import math
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,10 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+from config import HARDWARE_CONFIG, HARDWARE_TIA_ARGS, load_config, parse_config_args, save_config_snapshot
+
+HARDWARE_DEFAULTS = load_config(HARDWARE_CONFIG)
 DEFAULT_SUMMARY = PROJECT_ROOT / "simulation_validation" / "results" / "findpoint_summary.json"
 DEFAULT_OUT_DIR = PROJECT_ROOT / "simulation_validation" / "results"
 
@@ -27,16 +32,16 @@ Q_ELECTRON = 1.602176634e-19
 
 @dataclass(frozen=True)
 class TIAParams:
-    rf_ohm: float = 100e3
-    cf_f: float = 10e-12
-    temp_k: float = 290.0
-    responsivity_a_per_w: float = 0.786
-    rin_db_hz: float = -145.0
-    opamp_en_v_per_sqrt_hz: float = 5.1e-9
-    opamp_in_a_per_sqrt_hz: float = 0.8e-15
-    high_freq_enbw_hz: float = 122070.3125
-    low_freq_enbw_hz: float = 1.0
-    passband_ratio: float = 0.1
+    rf_ohm: float = HARDWARE_DEFAULTS.tia.rf_ohm
+    cf_f: float = HARDWARE_DEFAULTS.tia.cf_f
+    temp_k: float = HARDWARE_DEFAULTS.physical.temp_k
+    responsivity_a_per_w: float = HARDWARE_DEFAULTS.physical.responsivity_a_per_w
+    rin_db_hz: float = HARDWARE_DEFAULTS.physical.rin_db_hz
+    opamp_en_v_per_sqrt_hz: float = HARDWARE_DEFAULTS.tia.opamp_en_v_per_sqrt_hz
+    opamp_in_a_per_sqrt_hz: float = HARDWARE_DEFAULTS.tia.opamp_in_a_per_sqrt_hz
+    high_freq_enbw_hz: float = HARDWARE_DEFAULTS.tia.high_freq_enbw_hz
+    low_freq_enbw_hz: float = HARDWARE_DEFAULTS.tia.low_freq_enbw_hz
+    passband_ratio: float = HARDWARE_DEFAULTS.tia.passband_ratio
 
     @property
     def fc_hz(self) -> float:
@@ -343,7 +348,7 @@ def _write_report(summary: dict[str, Any], path: Path) -> None:
             "## 3. 结论",
             "",
             "- `TIA_PASSBAND` 表示该频点在当前 TIA 低频有效带宽内。",
-            "- `TIA_OUT_OF_BAND` 表示该频点经过 `100kΩ // 10pF` TIA 后会被严重衰减，不应直接作为该 TIA 输出端的控制观测量。",
+            "- `TIA_OUT_OF_BAND` 表示该频点经过当前配置的 Rf/Cf TIA 后会被严重衰减，不应直接作为该 TIA 输出端的控制观测量。",
             "- 当前报告只做一阶估算，暂未加入 PD 结电容、PCB 寄生电容、真实 ADC 输入噪声和输出摆幅实测限制。",
         ]
     )
@@ -355,20 +360,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Estimate TIA output visibility for selected findpoint rows.")
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
-    parser.add_argument("--rf-ohm", type=float, default=100e3)
-    parser.add_argument("--cf-f", type=float, default=10e-12)
-    parser.add_argument("--temp-k", type=float, default=290.0)
-    parser.add_argument("--responsivity", type=float, default=0.786)
-    parser.add_argument("--rin-db-hz", type=float, default=-145.0)
-    parser.add_argument("--opamp-en", type=float, default=5.1e-9)
-    parser.add_argument("--opamp-in", type=float, default=0.8e-15)
-    parser.add_argument("--high-freq-enbw", type=float, default=122070.3125)
-    parser.add_argument("--low-freq-enbw", type=float, default=1.0)
+    parser.add_argument("--rf-ohm", type=float)
+    parser.add_argument("--cf-f", type=float)
+    parser.add_argument("--temp-k", type=float)
+    parser.add_argument("--responsivity", type=float)
+    parser.add_argument("--rin-db-hz", type=float)
+    parser.add_argument("--opamp-en", type=float)
+    parser.add_argument("--opamp-in", type=float)
+    parser.add_argument("--high-freq-enbw", type=float)
+    parser.add_argument("--low-freq-enbw", type=float)
     return parser
 
 
+def parse_args(argv=None):
+    parser = build_parser()
+    args = parse_config_args(parser, {key: value for key, value in HARDWARE_TIA_ARGS.items()
+                                    if key != "rng_seed"}, argv, default_config=HARDWARE_CONFIG)
+    if args.project_config.tia.profile != "hardware":
+        parser.error("This entry estimates the hardware Rf/Cf/opamp TIA; use spectrum for the VPI TIA")
+    return args
+
+
 def main() -> int:
-    args = build_parser().parse_args()
+    args = parse_args()
+    save_config_snapshot(args.project_config, args.out_dir / "visibility_config", source=args.config)
     params = TIAParams(
         rf_ohm=args.rf_ohm,
         cf_f=args.cf_f,
@@ -379,6 +394,7 @@ def main() -> int:
         opamp_in_a_per_sqrt_hz=args.opamp_in,
         high_freq_enbw_hz=args.high_freq_enbw,
         low_freq_enbw_hz=args.low_freq_enbw,
+        passband_ratio=args.project_config.tia.passband_ratio,
     )
     output = run_analysis(summary_path=args.summary.resolve(), out_dir=args.out_dir.resolve(), params=params)
     print(f"overall_status={output['overall_status']}")

@@ -16,12 +16,15 @@ import csv
 import json
 import math
 import random
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from tia_visibility_analyzer import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from config import HARDWARE_CONFIG, HARDWARE_TIA_ARGS, parse_config_args, save_config_snapshot
+from simulation_validation.tia_visibility_analyzer import (
     TIAParams,
     _bandwidth_flag,
     _default_enbw,
@@ -480,21 +483,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
-    parser.add_argument("--rng-seed", type=int, default=20260708)
-    parser.add_argument("--rf-ohm", type=float, default=100e3)
-    parser.add_argument("--cf-f", type=float, default=10e-12)
-    parser.add_argument("--temp-k", type=float, default=290.0)
-    parser.add_argument("--responsivity", type=float, default=0.786)
-    parser.add_argument("--rin-db-hz", type=float, default=-145.0)
-    parser.add_argument("--opamp-en", type=float, default=5.1e-9)
-    parser.add_argument("--opamp-in", type=float, default=0.8e-15)
-    parser.add_argument("--high-freq-enbw", type=float, default=122070.3125)
-    parser.add_argument("--low-freq-enbw", type=float, default=1.0)
+    parser.add_argument("--rng-seed", type=int)
+    parser.add_argument("--rf-ohm", type=float)
+    parser.add_argument("--cf-f", type=float)
+    parser.add_argument("--temp-k", type=float)
+    parser.add_argument("--responsivity", type=float)
+    parser.add_argument("--rin-db-hz", type=float)
+    parser.add_argument("--opamp-en", type=float)
+    parser.add_argument("--opamp-in", type=float)
+    parser.add_argument("--high-freq-enbw", type=float)
+    parser.add_argument("--low-freq-enbw", type=float)
     return parser
 
 
+def parse_args(argv=None):
+    parser = build_parser()
+    args = parse_config_args(parser, HARDWARE_TIA_ARGS, argv, default_config=HARDWARE_CONFIG)
+    if args.project_config.tia.profile != "hardware":
+        parser.error("This entry estimates hardware TIA curves; use spectrum for the VPI TIA")
+    return args
+
+
 def main() -> int:
-    args = build_parser().parse_args()
+    args = parse_args()
+    save_config_snapshot(args.project_config, args.out_dir, source=args.config)
     params = TIAParams(
         rf_ohm=args.rf_ohm,
         cf_f=args.cf_f,
@@ -505,6 +517,7 @@ def main() -> int:
         opamp_in_a_per_sqrt_hz=args.opamp_in,
         high_freq_enbw_hz=args.high_freq_enbw,
         low_freq_enbw_hz=args.low_freq_enbw,
+        passband_ratio=args.project_config.tia.passband_ratio,
     )
     products = run(
         summary_path=args.summary.resolve(),

@@ -16,11 +16,14 @@ import argparse
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from findpoint_validator import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from config import DEFAULT_CONFIG, PHYSICAL_ARGS, ROOT, parse_config_args, save_config_snapshot, validate_config
+from simulation_validation.findpoint_validator import (
     PROJECT_ROOT,
     STEP_SPECS,
     _summarize_step,
@@ -123,6 +126,13 @@ def run_chained_findpoint(
     p_dither_amp: float,
     edge_points: int,
     major_window_db: float,
+    scan_start: float = DEFAULT_CONFIG.findpoint.scan_start_source_v,
+    scan_stop: float = DEFAULT_CONFIG.findpoint.scan_stop_source_v,
+    scan_step: float = DEFAULT_CONFIG.findpoint.scan_step_source_v,
+    er_model: str = DEFAULT_CONFIG.physical.er_model,
+    temp_k: float = DEFAULT_CONFIG.physical.temp_k,
+    rin_db_hz: float = DEFAULT_CONFIG.physical.rin_db_hz,
+    report_dir: Path | None = None,
 ) -> dict[str, Any]:
     if not sim_root.exists():
         raise FileNotFoundError(f"Simulation repository not found: {sim_root}")
@@ -143,8 +153,17 @@ def run_chained_findpoint(
     p2_tag = _format_freq_tag(2.0 * f_p)
     beat_tag = _format_freq_tag(f_i + f_p)
 
-    _run_module(
-        sim_root,
+    def run_scan(module, arguments):
+        axis = {
+            "dpmzm.i_pilot_first_sweep": "i", "dpmzm.q_pilot_first_sweep": "q",
+            "dpmzm.pilot_beat_sweep": "p", "dpmzm.p_pilot_second_sweep": "i",
+        }[module]
+        _run_module(sim_root, module, [*arguments,
+            f"--{axis}-start", str(scan_start), f"--{axis}-stop", str(scan_stop),
+            f"--{axis}-step", str(scan_step), "--er-model", er_model,
+            "--temp-k", str(temp_k), "--rin-db-hz", str(rin_db_hz)])
+
+    run_scan(
         "dpmzm.i_pilot_first_sweep",
         [
             "--out-dir",
@@ -195,8 +214,7 @@ def run_chained_findpoint(
         major_window_db=major_window_db,
     )
 
-    _run_module(
-        sim_root,
+    run_scan(
         "dpmzm.q_pilot_first_sweep",
         [
             "--out-dir",
@@ -255,8 +273,7 @@ def run_chained_findpoint(
     # pilot_beat_sweep accepts direct model phase-drive voltages for I/Q, so
     # bridge effective voltages are used here. P is a parent/common-phase source
     # voltage and therefore source == effective in the current model.
-    _run_module(
-        sim_root,
+    run_scan(
         "dpmzm.pilot_beat_sweep",
         [
             "--out-dir",
@@ -308,8 +325,7 @@ def run_chained_findpoint(
     )
     v_dcp_extreme = _number(step2, "output_value")
 
-    _run_module(
-        sim_root,
+    run_scan(
         "dpmzm.p_pilot_second_sweep",
         [
             "--out-dir",
@@ -361,8 +377,7 @@ def run_chained_findpoint(
     )
     v_dci_min = _number(step3, "output_value")
 
-    _run_module(
-        sim_root,
+    run_scan(
         "dpmzm.q_pilot_first_sweep",
         [
             "--out-dir",
@@ -472,6 +487,12 @@ def run_chained_findpoint(
             "p_dither_amp_source_vpeak": p_dither_amp,
             "edge_points": edge_points,
             "major_window_db": major_window_db,
+            "scan_start_source_v": scan_start,
+            "scan_stop_source_v": scan_stop,
+            "scan_step_source_v": scan_step,
+            "er_model": er_model,
+            "temp_k": temp_k,
+            "rin_db_hz": rin_db_hz,
         },
         "steps": steps,
     }
@@ -480,7 +501,7 @@ def run_chained_findpoint(
 
     validation = run_validation(
         project_root=PROJECT_ROOT,
-        out_dir=PROJECT_ROOT / "simulation_validation" / "results",
+        out_dir=report_dir or PROJECT_ROOT / "simulation_validation" / "results",
         edge_points=edge_points,
         major_window_db=major_window_db,
         overrides={
@@ -502,36 +523,76 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run chained DPMZM low-frequency find-point sweeps.")
     parser.add_argument("--sim-root", type=Path, default=DEFAULT_SIM_ROOT)
     parser.add_argument("--chain-root", type=Path, default=DEFAULT_CHAIN_ROOT)
-    parser.add_argument("--fs", type=float, default=100_000.0)
-    parser.add_argument("--t-total", type=float, default=1.0)
-    parser.add_argument("--f-i", type=float, default=1_000.0)
-    parser.add_argument("--f-q", type=float, default=1_200.0)
-    parser.add_argument("--f-p", type=float, default=1_300.0)
-    parser.add_argument("--vpi", type=float, default=5.0)
-    parser.add_argument("--er-db", type=float, default=30.0)
-    parser.add_argument("--il-db", type=float, default=0.0)
-    parser.add_argument("--il-i-db", type=float, default=6.0)
-    parser.add_argument("--il-q-db", type=float, default=6.0)
-    parser.add_argument("--il-p-db", type=float, default=0.0)
-    parser.add_argument("--pin-dbm", type=float, default=10.0)
-    parser.add_argument("--responsivity", type=float, default=0.8)
-    parser.add_argument("--pd-tap", type=float, default=1.0)
-    parser.add_argument("--child-source-gain", type=float, default=2.0)
-    parser.add_argument("--parent-source-gain", type=float, default=1.0)
-    parser.add_argument("--step1-i-fixed-q-bias", type=float, default=1.367)
-    parser.add_argument("--step1-i-fixed-p-bias", type=float, default=0.0)
-    parser.add_argument("--step1-q-fixed-i-bias", type=float, default=1.367)
-    parser.add_argument("--step1-q-fixed-p-bias", type=float, default=0.0)
-    parser.add_argument("--i-dither-amp", type=float, default=0.025)
-    parser.add_argument("--q-dither-amp", type=float, default=0.025)
-    parser.add_argument("--p-dither-amp", type=float, default=0.025)
-    parser.add_argument("--edge-points", type=int, default=5)
-    parser.add_argument("--major-window-db", type=float, default=3.0)
+    parser.add_argument("--report-dir", type=Path)
+    parser.add_argument("--fs", type=float)
+    parser.add_argument("--t-total", type=float)
+    parser.add_argument("--f-i", type=float)
+    parser.add_argument("--f-q", type=float)
+    parser.add_argument("--f-p", type=float)
+    parser.add_argument("--vpi", type=float)
+    parser.add_argument("--er-db", type=float)
+    parser.add_argument("--il-db", type=float)
+    parser.add_argument("--il-i-db", type=float)
+    parser.add_argument("--il-q-db", type=float)
+    parser.add_argument("--il-p-db", type=float)
+    parser.add_argument("--pin-dbm", type=float)
+    parser.add_argument("--responsivity", type=float)
+    parser.add_argument("--pd-tap", type=float)
+    parser.add_argument("--child-source-gain", type=float)
+    parser.add_argument("--parent-source-gain", type=float)
+    parser.add_argument("--er-model", choices=("vpi", "thesis"))
+    parser.add_argument("--rin-db-hz", type=float)
+    parser.add_argument("--temp-k", type=float)
+    parser.add_argument("--step1-i-fixed-q-bias", type=float)
+    parser.add_argument("--step1-i-fixed-p-bias", type=float)
+    parser.add_argument("--step1-q-fixed-i-bias", type=float)
+    parser.add_argument("--step1-q-fixed-p-bias", type=float)
+    parser.add_argument("--i-dither-amp", type=float)
+    parser.add_argument("--q-dither-amp", type=float)
+    parser.add_argument("--p-dither-amp", type=float)
+    parser.add_argument("--scan-start", type=float)
+    parser.add_argument("--scan-stop", type=float)
+    parser.add_argument("--scan-step", type=float)
+    parser.add_argument("--edge-points", type=int)
+    parser.add_argument("--major-window-db", type=float)
     return parser
 
 
+def parse_args(argv=None):
+    parser = build_parser()
+    args = parse_config_args(parser, {
+        **PHYSICAL_ARGS, "fs": "sampling.fs_hz", "t_total": "sampling.t_total_s",
+        "f_i": "drive.f_i_hz", "f_q": "drive.f_q_hz", "f_p": "drive.f_p_hz",
+        "i_dither_amp": "drive.i_dither_source_amp_vpeak",
+        "q_dither_amp": "drive.q_dither_source_amp_vpeak",
+        "p_dither_amp": "findpoint.p_dither_source_amp_vpeak",
+        "step1_i_fixed_q_bias": "findpoint.step1_i_fixed_q_bias",
+        "step1_q_fixed_i_bias": "findpoint.step1_q_fixed_i_bias",
+        "scan_start": "findpoint.scan_start_source_v", "scan_stop": "findpoint.scan_stop_source_v",
+        "scan_step": "findpoint.scan_step_source_v", "edge_points": "findpoint.edge_points",
+        "major_window_db": "findpoint.major_window_db",
+    }, argv, default_config=ROOT / "configs" / "findpoint.json")
+    cfg = args.project_config
+    for source_field, phase_field in (
+        ("step1_i_fixed_p_bias", "step1_i_fixed_p_phase_deg"),
+        ("step1_q_fixed_p_bias", "step1_q_fixed_p_phase_deg"),
+    ):
+        voltage = getattr(args, source_field)
+        if voltage is None:
+            setattr(args, source_field, cfg.p_source_voltage(getattr(cfg.findpoint, phase_field)))
+        else:
+            phase = 180.0 * cfg.physical.parent_source_gain * voltage / cfg.physical.vpi_v
+            cfg = replace(cfg, findpoint=replace(cfg.findpoint, **{phase_field: phase}))
+    try:
+        args.project_config = validate_config(cfg)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return args
+
+
 def main() -> int:
-    args = build_parser().parse_args()
+    args = parse_args()
+    save_config_snapshot(args.project_config, args.chain_root, source=args.config)
     manifest = run_chained_findpoint(
         sim_root=args.sim_root.resolve(),
         chain_root=args.chain_root.resolve(),
@@ -560,6 +621,9 @@ def main() -> int:
         p_dither_amp=args.p_dither_amp,
         edge_points=args.edge_points,
         major_window_db=args.major_window_db,
+        scan_start=args.scan_start, scan_stop=args.scan_stop, scan_step=args.scan_step,
+        er_model=args.er_model, temp_k=args.temp_k, rin_db_hz=args.rin_db_hz,
+        report_dir=args.report_dir,
     )
     print(f"manifest={manifest['manifest_path']}")
     print(f"validation_summary={manifest['validation_summary_path']}")

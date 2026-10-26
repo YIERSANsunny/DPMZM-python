@@ -1,0 +1,8 @@
+{
+  "case_name": "iq_i0p5_q0p7_p140deg",
+  "drive": {
+    "i_source_bias_v": 0.5,
+    "q_source_bias_v": 0.7,
+    "p_phase_deg": 140.0
+  }
+}
